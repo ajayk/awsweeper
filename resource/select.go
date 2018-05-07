@@ -1,19 +1,26 @@
 package resource
 
 import (
+	"log"
+	"strings"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/kms"
-	"log"
-	"strings"
 )
 
+// here is where the selection of resources happens, i.e.
+// the filter entry for a certain resource type
+// is applied to all resources of that type.
+//
+// For most resource resourceTypes, this generic method can be used for selection,
+// but some resource resourceTypes require handling of special cases (see functions below).
 func filterGeneric(res Resources, raw interface{}, f Filter, c *AWSClient) []Resources {
 	result := Resources{}
 
 	for _, r := range res {
-		if f.Matches(r.Type, r.ID, r.Tags) {
+		if f.Matches(FilterableResource{r.Type, r.ID, r.Tags}) {
 			result = append(result, r)
 		}
 	}
@@ -25,7 +32,7 @@ func filterEfsFileSystem(res Resources, raw interface{}, f Filter, c *AWSClient)
 	resultMt := Resources{}
 
 	for _, r := range res {
-		if f.Matches(r.Type, *raw.(*efs.DescribeFileSystemsOutput).FileSystems[0].Name) {
+		if f.Matches(FilterableResource{Type: r.Type, ID: *raw.(*efs.DescribeFileSystemsOutput).FileSystems[0].Name}) {
 			res, err := c.EFSconn.DescribeMountTargets(&efs.DescribeMountTargetsInput{
 				FileSystemId: &r.ID,
 			})
@@ -50,7 +57,7 @@ func filterIamUser(res Resources, raw interface{}, f Filter, c *AWSClient) []Res
 	resultUserPol := Resources{}
 
 	for _, r := range res {
-		if f.Matches(r.Type, r.ID) {
+		if f.Matches(FilterableResource{Type: r.Type, ID: r.ID}) {
 			// list inline policies, delete with "aws_iam_user_policy" delete routine
 			ups, err := c.IAMconn.ListUserPolicies(&iam.ListUserPoliciesInput{
 				UserName: &r.ID,
@@ -92,7 +99,7 @@ func filterIamPolicy(res Resources, raw interface{}, f Filter, c *AWSClient) []R
 	resultAtt := Resources{}
 
 	for i, r := range res {
-		if f.Matches(r.Type, r.ID) {
+		if f.Matches(FilterableResource{Type: r.Type, ID: r.ID}) {
 			es, err := c.IAMconn.ListEntitiesForPolicy(&iam.ListEntitiesForPolicyInput{
 				PolicyArn: &r.ID,
 			})
@@ -137,7 +144,7 @@ func filterKmsKeys(res Resources, raw interface{}, f Filter, c *AWSClient) []Res
 	result := Resources{}
 
 	for _, r := range res {
-		if f.Matches(r.Type, r.ID) {
+		if f.Matches(FilterableResource{Type: r.Type, ID: r.ID}) {
 			req, res := c.KMSconn.DescribeKeyRequest(&kms.DescribeKeyInput{
 				KeyId: aws.String(r.ID),
 			})

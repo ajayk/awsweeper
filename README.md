@@ -22,7 +22,7 @@
 </p>
 
 AWSweeper wipes out all (or parts) of the resources in your AWS account. Resources to be deleted can be filtered by their tags or IDs
-using [regular expressions](https://golang.org/pkg/regexp/syntax/) declared in a yaml file (see [config.yml](dependency/config.yml)).
+using [regular expressions](https://golang.org/pkg/regexp/syntax/) declared in a yaml file (see [config.yml](example/config.yml)).
 
 AWSweeper [can delete many](#supported-resources), but not all resources yet.
 
@@ -83,6 +83,13 @@ There are three ways to filter resources:
    all the IDs and tags of your resources are printed. Then, use this information to create the yaml file.
    
    In the example above, all roles which name starts with `foo` are deleted (the ID of roles is their name).
+   
+4) By creation date
+
+    aws_instance:
+      created:
+        before: 2018-06-14
+        after: 2018-09-15
    
 ## Test run
 

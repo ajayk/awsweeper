@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,7 +14,7 @@ var (
 	instanceType      = "aws_instance"
 	vpc               = "aws_vpc"
 
-	yml = YamlCfg{
+	yml = Config{
 		iamRoleType: {
 			Ids: []*string{aws.String("^foo.*")},
 		},
@@ -32,38 +33,32 @@ var (
 		},
 	}
 
-	f = &YamlFilter{
+	f = &Filter{
 		cfg: yml,
 	}
 )
 
-func TestValidate(t *testing.T) {
-	apiDescs := Supported(mockAWSClient())
-
-	require.NoError(t, f.Validate(apiDescs))
+func TestFilter_Validate(t *testing.T) {
+	require.NoError(t, f.Validate(mockAWSClient()))
 }
 
-func TestValidate_EmptyCfg(t *testing.T) {
-	apiDescs := Supported(mockAWSClient())
-
-	require.NoError(t, f.Validate(apiDescs))
+func TestFilter_Validate_EmptyConfig(t *testing.T) {
+	require.NoError(t, f.Validate(mockAWSClient()))
 }
 
-func TestValidate_NotSupportedResourceTypeInCfg(t *testing.T) {
-	apiDescs := Supported(mockAWSClient())
-
-	f := &YamlFilter{
-		cfg: YamlCfg{
+func TestFilter_Validate_NotSupportedResourceTypeInConfig(t *testing.T) {
+	f := &Filter{
+		cfg: Config{
 			securityGroupType:    {},
 			"not_supported_type": {},
 		},
 	}
 
-	require.Error(t, f.Validate(apiDescs))
+	require.Error(t, f.Validate(mockAWSClient()))
 }
 
-func TestResourceTypes(t *testing.T) {
-	resTypes := f.Types()
+func TestFilter_ResourceTypes(t *testing.T) {
+	resTypes := f.ResourceTypes()
 
 	require.Len(t, resTypes, len(yml))
 	require.Contains(t, resTypes, securityGroupType)
@@ -71,85 +66,131 @@ func TestResourceTypes(t *testing.T) {
 	require.Contains(t, resTypes, instanceType)
 }
 
-func TestResourceTypes_emptyCfg(t *testing.T) {
-	rf := &YamlFilter{
-		cfg: YamlCfg{},
+func TestFilter_ResourceTypes_emptyConfig(t *testing.T) {
+	f := &Filter{
+		cfg: Config{},
 	}
 
-	resTypes := rf.Types()
+	resTypes := f.ResourceTypes()
 
 	require.Len(t, resTypes, 0)
 	require.Empty(t, resTypes)
 }
 
-func TestResourceMatchIds_IdMatchesFilterCriteria(t *testing.T) {
-	matchesID, err := f.matchID(iamRoleType, "foo-lala")
+func TestFilter_matchID(t *testing.T) {
+	r := FilterableResource{Type: iamRoleType, ID: "foo-lala"}
+
+	matchesID, err := f.matchID(r)
 
 	require.True(t, matchesID)
 	require.NoError(t, err)
 }
 
-func TestResourceMatchIds_IdDoesNotMatchFilterCriteria(t *testing.T) {
-	matchesID, err := f.matchID(iamRoleType, "lala-foo")
+func TestFilter_matchID_ResourceIDnotMatchingFilterCriteria(t *testing.T) {
+	r := FilterableResource{Type: iamRoleType, ID: "lala-foo"}
+
+	matchesID, err := f.matchID(r)
 
 	require.False(t, matchesID)
 	require.NoError(t, err)
 }
 
-func TestResourceMatchIds_NoFilterCriteriaSetForIds(t *testing.T) {
-	_, err := f.matchID(securityGroupType, "matches-any-id")
+func TestFilter_matchID_NoFilterCriteriaSetForIds(t *testing.T) {
+	r := FilterableResource{Type: securityGroupType, ID: "matches-any-id"}
+
+	_, err := f.matchID(r)
 
 	require.Error(t, err)
 }
 
-func TestResourceMatchTags_TagMatchesFilterCriteria(t *testing.T) {
-	matchesTags, err := f.matchTags(instanceType, map[string]string{"foo": "bar"})
+func TestFilter_MatchTags(t *testing.T) {
+	var testCases = []struct {
+		actual   FilterableResource
+		expected bool
+	}{
+		{
+			actual:   FilterableResource{Type: instanceType, Tags: map[string]string{"foo": "bar"}},
+			expected: true,
+		},
+		{
+			actual:   FilterableResource{Type: instanceType, Tags: map[string]string{"bla": "blub"}},
+			expected: true,
+		},
+		{
+			actual:   FilterableResource{Type: instanceType, Tags: map[string]string{"foo": "baz"}},
+			expected: false,
+		},
+		{
+			actual:   FilterableResource{Type: instanceType, Tags: map[string]string{"blub": "bla"}},
+			expected: false,
+		},
+	}
 
-	require.True(t, matchesTags)
-	require.NoError(t, err)
+	for _, tc := range testCases {
+		matchesTags, err := f.matchTags(tc.actual)
+		require.Equal(t, matchesTags, tc.expected)
+		require.NoError(t, err)
 
-	matchesTags, err = f.matchTags(instanceType, map[string]string{"bla": "blub"})
-
-	require.True(t, matchesTags)
-	require.NoError(t, err)
-}
-
-func TestResourceMatchTags_TagDoesNotMatchFilterCriteria(t *testing.T) {
-	matchesTags, err := f.matchTags(instanceType, map[string]string{"foo": "baz"})
-
-	require.False(t, matchesTags)
-	require.NoError(t, err)
-
-	matchesTags, err = f.matchTags(instanceType, map[string]string{"blub": "bla"})
-
-	require.False(t, matchesTags)
-	require.NoError(t, err)
+	}
 }
 
 func TestResourceMatchTags_NoFilterCriteriaSetForTags(t *testing.T) {
-	_, err := f.matchTags(securityGroupType, map[string]string{"any": "tag"})
+	_, err := f.matchTags(FilterableResource{Type: securityGroupType, Tags: map[string]string{"any": "tag"}})
 
 	require.Error(t, err)
 }
 
-func TestMatch_OnlyTagFilterCriteria(t *testing.T) {
-	require.True(t, f.Matches(instanceType, "foo-lala", map[string]string{"foo": "bar"}))
-	require.False(t, f.Matches(instanceType, "some-id", map[string]string{"any": "tag"}))
-	require.False(t, f.Matches(instanceType, "some-id"))
-}
+func TestFilter_Matches(t *testing.T) {
+	var testCases = []struct {
+		actual   FilterableResource
+		expected bool
+	}{
+		// only tag filter criteria given
+		{
+			actual:   FilterableResource{instanceType, "foo-lala", map[string]string{"foo": "bar"}},
+			expected: true,
+		},
+		{
+			actual:   FilterableResource{instanceType, "some-id", map[string]string{"any": "tag"}},
+			expected: false,
+		},
+		{
+			actual:   FilterableResource{Type: instanceType, ID: "some-id"},
+			expected: false,
+		},
+		// only filter ID criteria given
+		{
+			actual:   FilterableResource{iamRoleType, "foo-lala", map[string]string{"any": "tag"}},
+			expected: true,
+		},
+		{
+			actual:   FilterableResource{iamRoleType, "some-id", map[string]string{"foo": "bar"}},
+			expected: false,
+		},
+		{
+			actual:   FilterableResource{Type: iamRoleType, ID: "some-id"},
+			expected: false,
+		},
+		// ID and tag filter criteria
+		{
+			actual:   FilterableResource{vpc, "foo-lala", map[string]string{"any": "tag"}},
+			expected: true,
+		},
+		{
+			actual:   FilterableResource{vpc, "some-id", map[string]string{"foo": "bar"}},
+			expected: true,
+		},
+		{
+			actual:   FilterableResource{vpc, "some-id", map[string]string{"any": "tag"}},
+			expected: false,
+		},
+	}
 
-func TestMatch_OnlyIdFilterCriteria(t *testing.T) {
-	require.True(t, f.Matches(iamRoleType, "foo-lala", map[string]string{"any": "tag"}))
-	require.False(t, f.Matches(iamRoleType, "some-id", map[string]string{"foo": "bar"}))
-	require.False(t, f.Matches(iamRoleType, "some-id"))
-}
-
-func TestMatch_IdAndTagFilterCriteria(t *testing.T) {
-	require.True(t, f.Matches(vpc, "foo-lala", map[string]string{"any": "tag"}))
-	require.True(t, f.Matches(vpc, "some-id", map[string]string{"foo": "bar"}))
-	require.False(t, f.Matches(vpc, "some-id", map[string]string{"any": "tag"}))
+	for _, tc := range testCases {
+		assert.Equal(t, tc.expected, f.Matches(tc.actual))
+	}
 }
 
 func TestMatch_NoFilterCriteriaGiven(t *testing.T) {
-	require.True(t, f.Matches(securityGroupType, "any-id", map[string]string{"any": "tag"}))
+	assert.True(t, f.Matches(FilterableResource{securityGroupType, "any-id", map[string]string{"any": "tag"}}))
 }
